@@ -2,12 +2,12 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
-	"errors"
 
 	"github.com/beevik/ntp"
 	"github.com/gdamore/tcell/v2"
@@ -22,7 +22,7 @@ var (
 	enabled         = true
 	weekdayTimes    = []string{}
 	pulseMode       = false
-	enableWeekend	= false
+	enableWeekend   = false
 	statusText      = "LOW"
 	logLines        = []string{}
 	pulseRunning    = false
@@ -45,53 +45,53 @@ func addLog(msg string) {
 }
 
 func AutoDetect() error {
-    ports, err := enumerator.GetDetailedPortsList()
-    if err != nil {
-        return err
-    }
+	ports, err := enumerator.GetDetailedPortsList()
+	if err != nil {
+		return err
+	}
 
-    for _, p := range ports {
-        if p.IsUSB && (strings.Contains(strings.ToLower(p.Product), "pico") ||
-            strings.Contains(strings.ToLower(p.SerialNumber), "pico")) {
+	for _, p := range ports {
+		if p.IsUSB && (strings.Contains(strings.ToLower(p.Product), "pico") ||
+			strings.Contains(strings.ToLower(p.SerialNumber), "pico")) {
 
-            mode := &serial.Mode{BaudRate: 115200}
-            port, err = serial.Open(p.Name, mode)
-            if err != nil {
-                return err
-            }
+			mode := &serial.Mode{BaudRate: 115200}
+			port, err = serial.Open(p.Name, mode)
+			if err != nil {
+				return err
+			}
 
-            reader = bufio.NewReader(port)
-            return nil
-        }
-    }
+			reader = bufio.NewReader(port)
+			return nil
+		}
+	}
 	addLog("NOPICO")
-    return errors.New("no Raspberry Pi Pico detected")
+	return errors.New("no Raspberry Pi Pico detected")
 }
 
 func sendCommand(cmd string) error {
-    if port == nil {
-        return errors.New("port not initialized, call AutoDetect() first")
-    }
+	if port == nil {
+		return errors.New("port not initialized, call AutoDetect() first")
+	}
 
-    fmt.Fprintf(port, "%s\n", cmd)
+	fmt.Fprintf(port, "%s\n", cmd)
 
-    port.SetReadTimeout(2 * time.Second)
-    resp, err := reader.ReadString('\n')
-    if err != nil {
-        return err
-    }
+	port.SetReadTimeout(2 * time.Second)
+	resp, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
 
-    if !strings.HasPrefix(resp, "OK") {
-        return fmt.Errorf("pico error: %s", resp)
+	if !strings.HasPrefix(resp, "OK") {
 		addLog("NOPICO1")
-    }
+		return fmt.Errorf("pico error: %s", resp)
+	}
 
-    return nil
+	return nil
 }
 
 // ---- GPIO MOCK ----
 func SetHigh() {
-		if !enabled {
+	if !enabled {
 		return
 	}
 
@@ -99,11 +99,11 @@ func SetHigh() {
 		addLog("Hétvégi csengés tiltva")
 		return
 	}
-		statusText = "HIGH"
-		addLog("GPIO -> HIGH")
-		sendCommand("HIGH")
-		
-		app.QueueUpdateDraw(func() {})
+	statusText = "HIGH"
+	addLog("GPIO -> HIGH")
+	sendCommand("HIGH")
+
+	app.QueueUpdateDraw(func() {})
 }
 
 func SetLow() {
@@ -115,7 +115,9 @@ func SetLow() {
 
 // ---- MAIN ----
 func main() {
-	AutoDetect()
+	if err := AutoDetect(); err != nil {
+		addLog("Pico nem található, offline mód")
+	}
 	loadTimesFromFile(currentTimeFile)
 
 	// --- NTP idő lekérése ---
@@ -159,9 +161,9 @@ func main() {
 			pages.SwitchToPage("filemenu")
 			app.SetFocus(pages)
 		}).
-				AddItem("7. Hétvégén csengessen", "", '6', func() {
-				enableWeekend = !enableWeekend
-			addLog(fmt.Sprintf("Hétvége -> %v", enabled))
+		AddItem("7. Hétvégén csengessen", "", '6', func() {
+			enableWeekend = !enableWeekend
+			addLog(fmt.Sprintf("Hétvége -> %v", enableWeekend))
 		})
 
 	statusBar := tview.NewTextView().SetDynamicColors(true)
@@ -185,15 +187,15 @@ func main() {
 			ct := currentTime
 			timeMutex.Unlock()
 			app.QueueUpdateDraw(func() {
-	statusBar.SetText(fmt.Sprintf(
-		"[yellow]Idő:[white] %s  [white],[green]Engedélyezve:[white]%v [white](Hétvége:%v)  [white],[blue]Impulzus:[white]%v  [white],[red]Állapot:[white]%s [white],[red]Karbantartó: [white]Vaskó Péter[white], [red]Bellringer@Oveges",
-		ct.Format("15:04:05"),
-		enabled,
-		enableWeekend,
-		pulseMode,
-		statusText,
-	))
-})
+				statusBar.SetText(fmt.Sprintf(
+					"[yellow]Idő:[white] %s  [white],[green]Engedélyezve:[white]%v [white](Hétvége:%v)  [white],[blue]Impulzus:[white]%v  [white],[red]Állapot:[white]%s [white],[red]Karbantartó: [white]Vaskó Péter[white], [red]Bellringer@Oveges",
+					ct.Format("15:04:05"),
+					enabled,
+					enableWeekend,
+					pulseMode,
+					statusText,
+				))
+			})
 
 			time.Sleep(time.Second)
 		}
@@ -214,7 +216,6 @@ func clockTicker() {
 		app.QueueUpdateDraw(func() {})
 	}
 }
-
 
 func timesMenu() tview.Primitive {
 	input := tview.NewInputField().SetLabel("Idő (HH:MM): ")
@@ -243,9 +244,9 @@ func timesMenu() tview.Primitive {
 			// Idő hozzáadása
 			weekdayTimes = append(weekdayTimes, txt)
 			addLog("Idő hozzáadva: " + txt)
-			saveTimesToFile()   // mentés fájlba
-			updateTimesMenu()   // frissítés az UI-ban
-			input.SetText("")   // mező ürítése
+			saveTimesToFile() // mentés fájlba
+			updateTimesMenu() // frissítés az UI-ban
+			input.SetText("") // mező ürítése
 		}
 	})
 
@@ -271,6 +272,7 @@ func timesMenu() tview.Primitive {
 		AddItem(input, 1, 1, true).
 		AddItem(back, 1, 1, false)
 }
+
 // ---- DEV CONSOLE ----
 func devConsole() tview.Primitive {
 	console := tview.NewTextView().SetDynamicColors(true)
@@ -393,9 +395,8 @@ func triggerPulseOnce() {
 
 	// vissza LOW-ra
 	SetLow()
-	
-}
 
+}
 
 func sleepWithDraw(d time.Duration) {
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -433,7 +434,6 @@ func scheduler() {
 		time.Sleep(time.Second)
 	}
 }
-
 
 // ---- FILE LOAD/SAVE ----
 func loadTimesFromFile(filename string) {
