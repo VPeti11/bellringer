@@ -119,15 +119,3 @@ A futtatáshoz szükséges könyvtárak:
 - `go.bug.st/serial`
 
 ---
-
-
----
-
-Ha szeretnéd, készítek hozzá:
-
-- telepítési útmutatót  
-- Pico‑oldali firmware dokumentációt  
-- képernyőképekkel bővített verziót  
-- GitHub‑ra optimalizált változatot  
-
-Csak szólj, merre menjünk tovább.
