@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/beevik/ntp"
+	"github.com/faiface/beep"
+	"github.com/faiface/beep/effects"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
 	"github.com/gdamore/tcell/v2"
@@ -37,25 +39,64 @@ var (
 
 var port serial.Port
 var reader *bufio.Reader
+var (
+	bellRinging bool
+	ctrl        *beep.Ctrl
+	volume      *effects.Volume
+)
 
-func playMP3(path string) {
+func stopRing() {
+	if !bellRinging {
+		return
+	}
+	bellRinging = false
+
+	// Fade-out duration
+	fade := 250 * time.Millisecond
+	steps := 25
+	stepDur := fade / time.Duration(steps)
+
 	go func() {
-		f, err := os.Open(path)
-		if err != nil {
-			log.Println("open:", err)
-			return
+		for i := 0; i < steps; i++ {
+			speaker.Lock()
+			volume.Volume -= 1.0 / float64(steps) // fade to silence
+			speaker.Unlock()
+			time.Sleep(stepDur)
 		}
-		streamer, format, err := mp3.Decode(f)
-		if err != nil {
-			log.Println("decode:", err)
-			return
-		}
-		defer streamer.Close()
 
-		speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-
-		speaker.Play(streamer)
+		speaker.Lock()
+		ctrl.Paused = true
+		speaker.Unlock()
 	}()
+}
+
+func playMP3() {
+	if bellRinging {
+		return
+	}
+	bellRinging = true
+
+	f, err := os.Open("ring.mp3")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	streamer, format, err := mp3.Decode(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
+	ctrl = &beep.Ctrl{Streamer: streamer, Paused: false}
+	volume = &effects.Volume{
+		Streamer: ctrl,
+		Base:     2,
+		Volume:   0, // normal volume
+		Silent:   false,
+	}
+
+	speaker.Play(volume)
 }
 
 // ---- LOG ----
@@ -125,7 +166,7 @@ func SetHigh() {
 	statusText = "HIGH"
 	addLog("GPIO -> HIGH")
 	sendCommand("HIGH")
-	playMP3("ring.mp3 ")
+	go playMP3()
 
 	app.QueueUpdateDraw(func() {})
 }
@@ -134,6 +175,7 @@ func SetLow() {
 	statusText = "LOW"
 	addLog("GPIO -> LOW")
 	sendCommand("LOW")
+	stopRing()
 	app.QueueUpdateDraw(func() {})
 }
 
@@ -242,7 +284,7 @@ func clockTicker() {
 }
 
 func timesMenu() tview.Primitive {
-	input := tview.NewInputField().SetLabel("Idő (HH:MM): ")
+	input := tview.NewInputField().SetLabel("Idő HH:MM:SS): ")
 	timesInfo := tview.NewTextView().SetDynamicColors(true)
 
 	// A globális updateTimesMenu változóhoz rendeljük a frissítő függvényt
@@ -260,7 +302,7 @@ func timesMenu() tview.Primitive {
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			txt := input.GetText()
-			_, err := time.Parse("15:04", txt) // csak ellenőrzés, t nem kell
+			_, err := time.Parse("15:04:05", txt) // csak ellenőrzés, t nem kell
 			if err != nil {
 				addLog("Hibás időformátum: " + txt)
 				return
@@ -415,7 +457,7 @@ func triggerPulseOnce() {
 
 	// 1 másodperces HIGH
 	SetHigh()
-	sleepWithDraw(5 * time.Second)
+	sleepWithDraw(3 * time.Second)
 
 	// vissza LOW-ra
 	SetLow()
@@ -445,7 +487,7 @@ func scheduler() {
 		}
 
 		timeMutex.Lock()
-		now := currentTime.Format("15:04")
+		now := currentTime.Format("15:04:05")
 		timeMutex.Unlock()
 
 		for _, t := range weekdayTimes {
@@ -490,7 +532,8 @@ func loadTimesFromFile(filename string) {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := strings.TrimSpace(strings.ReplaceAll(scanner.Text(), "\r", ""))
+		line = strings.TrimPrefix(line, "\ufeff") // BOM eltávolítása
 		if line != "" {
 			weekdayTimes = append(weekdayTimes, line)
 		}
