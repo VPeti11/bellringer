@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/beevik/ntp"
+	"github.com/faiface/beep/mp3"
+	"github.com/faiface/beep/speaker"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"go.bug.st/serial"
@@ -34,6 +37,26 @@ var (
 
 var port serial.Port
 var reader *bufio.Reader
+
+func playMP3(path string) {
+	go func() {
+		f, err := os.Open(path)
+		if err != nil {
+			log.Println("open:", err)
+			return
+		}
+		streamer, format, err := mp3.Decode(f)
+		if err != nil {
+			log.Println("decode:", err)
+			return
+		}
+		defer streamer.Close()
+
+		speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
+		speaker.Play(streamer)
+	}()
+}
 
 // ---- LOG ----
 func addLog(msg string) {
@@ -102,6 +125,7 @@ func SetHigh() {
 	statusText = "HIGH"
 	addLog("GPIO -> HIGH")
 	sendCommand("HIGH")
+	playMP3("ring.mp3 ")
 
 	app.QueueUpdateDraw(func() {})
 }
