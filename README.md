@@ -1,5 +1,5 @@
 # Bellringer
-Ez az alkalmazás egy Raspberry Pi Pico által vezérelt csengő/relé rendszer terminál‑alapú kezelőfelülete.  
+Ez az alkalmazás egy Raspberry Pi Pico által és/vagy mp3 által vezérelt csengő/relé rendszer terminál‑alapú kezelőfelülete.  
 A program időzítéseket kezel, impulzusmódot biztosít, NTP‑időt használ, és soros kapcsolaton keresztül vezérli a Pico GPIO‑ját.
 
 A felület a `tview` könyvtárra épül, és teljes egészében billentyűzetről használható.
@@ -59,10 +59,10 @@ Egy fájl egy időzítéslistát tartalmaz, soronként egy időponttal.
 Példa:
 
 ```
-07:45
-08:00
-12:30
-13:15
+07:45:00
+08:00:00
+12:30:00
+13:15:00
 ```
 
 A fájlok automatikusan megjelennek a menüben, és kiválaszthatók vagy szerkeszthetők.
