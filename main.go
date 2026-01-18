@@ -34,16 +34,81 @@ var (
 	currentTimeFile = "idobeall1.txt"
 	currentTime     time.Time
 	timeMutex       = &sync.Mutex{}
-	updateTimesMenu func() // globális frissítő függvény
-)
+	updateTimesMenu func()
 
-var port serial.Port
-var reader *bufio.Reader
-var (
+	KivalasztottPort string
+	port             serial.Port
+	reader           *bufio.Reader
+	sebesseg         = 115200
+	noserial         bool
+
 	bellRinging bool
 	ctrl        *beep.Ctrl
 	volume      *effects.Volume
 )
+
+func portValaszt() {
+
+	data, err := os.ReadFile("serial.txt")
+	if err == nil {
+
+		text := strings.TrimSpace(strings.ToLower(string(data)))
+		if text == "no" {
+			noserial = true
+			fmt.Println("Serial használat letiltva (serial.txt: no)")
+			return
+		} else if text != "" {
+			KivalasztottPort = text
+			fmt.Println("Serial port betöltve serial.txt-ből:", KivalasztottPort)
+			return
+		}
+	}
+
+	ports, err := enumerator.GetDetailedPortsList()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(ports) == 0 {
+		fmt.Println("Nincs elérhető soros port!")
+		noserial = true
+		return
+	}
+
+	fmt.Println("Elérhető soros portok:")
+	for i, port := range ports {
+		fmt.Printf("[%d] %s", i, port.Name)
+		if port.IsUSB {
+			fmt.Printf(" (USB VID: %s PID: %s)", port.VID, port.PID)
+		}
+		fmt.Println()
+	}
+
+	fmt.Print("Válasszon port számot (vagy írjon 'no' a letiltáshoz): ")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	valasz := scanner.Text()
+	valasz = strings.TrimSpace(strings.ToLower(valasz))
+
+	if valasz == "no" {
+		noserial = true
+		KivalasztottPort = ""
+
+		os.WriteFile("serial.txt", []byte("no"), 0644)
+		return
+	}
+
+	index := -1
+	fmt.Sscanf(valasz, "%d", &index)
+	if index < 0 || index >= len(ports) {
+		log.Fatal("Érvénytelen választás")
+	}
+
+	KivalasztottPort = ports[index].Name
+	fmt.Println("Kiválasztott port:", KivalasztottPort)
+
+	os.WriteFile("serial.txt", []byte(KivalasztottPort), 0644)
+}
 
 func stopRing() {
 	if !bellRinging {
@@ -51,7 +116,6 @@ func stopRing() {
 	}
 	bellRinging = false
 
-	// Fade-out duration
 	fade := 250 * time.Millisecond
 	steps := 25
 	stepDur := fade / time.Duration(steps)
@@ -59,7 +123,7 @@ func stopRing() {
 	go func() {
 		for i := 0; i < steps; i++ {
 			speaker.Lock()
-			volume.Volume -= 1.0 / float64(steps) // fade to silence
+			volume.Volume -= 1.0 / float64(steps)
 			speaker.Unlock()
 			time.Sleep(stepDur)
 		}
@@ -92,14 +156,13 @@ func playMP3() {
 	volume = &effects.Volume{
 		Streamer: ctrl,
 		Base:     2,
-		Volume:   0, // normal volume
+		Volume:   0,
 		Silent:   false,
 	}
 
 	speaker.Play(volume)
 }
 
-// ---- LOG ----
 func addLog(msg string) {
 	line := fmt.Sprintf("[%s] %s", currentTime.Format("15:04:05"), msg)
 	logLines = append(logLines, line)
@@ -128,44 +191,22 @@ func AutoDetect() error {
 			return nil
 		}
 	}
-	addLog("NOPICO")
 	return errors.New("no Raspberry Pi Pico detected")
 }
 
-func sendCommand(cmd string) error {
-	if port == nil {
-		return errors.New("port not initialized, call AutoDetect() first")
-	}
-
-	fmt.Fprintf(port, "%s\n", cmd)
-
-	port.SetReadTimeout(2 * time.Second)
-	resp, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-
-	if !strings.HasPrefix(resp, "OK") {
-		addLog("NOPICO1")
-		return fmt.Errorf("pico error: %s", resp)
-	}
-
-	return nil
-}
-
-// ---- GPIO MOCK ----
 func SetHigh() {
 	if !enabled {
 		return
 	}
-
-	if !canRunNow(enableWeekend) {
-		addLog("Hétvégi csengés tiltva")
-		return
+	if !pulseMode {
+		if !canRunNow() {
+			addLog("Hétvégi csengés tiltva")
+			return
+		}
 	}
 	statusText = "HIGH"
 	addLog("GPIO -> HIGH")
-	sendCommand("HIGH")
+	jelKuldes("HIGH")
 	go playMP3()
 
 	app.QueueUpdateDraw(func() {})
@@ -174,19 +215,62 @@ func SetHigh() {
 func SetLow() {
 	statusText = "LOW"
 	addLog("GPIO -> LOW")
-	sendCommand("LOW")
+	jelKuldes("LOW")
 	stopRing()
 	app.QueueUpdateDraw(func() {})
 }
 
-// ---- MAIN ----
-func main() {
-	if err := AutoDetect(); err != nil {
-		addLog("Pico nem található, offline mód")
+func jelKuldes(jel string) error {
+	if noserial {
+		return nil
 	}
+	if KivalasztottPort == "" {
+		addLog("Hiba: nincs kiválasztott port")
+		return fmt.Errorf("nincs kiválasztott port")
+	}
+
+	if jel != "HIGH" && jel != "LOW" {
+		addLog(fmt.Sprintf("Hiba: érvénytelen jel: %s", jel))
+		return fmt.Errorf("érvénytelen jel: %s", jel)
+	}
+
+	mode := &serial.Mode{
+		BaudRate: sebesseg,
+	}
+
+	port, err := serial.Open(KivalasztottPort, mode)
+	if err != nil {
+		addLog(fmt.Sprintf("Hiba port megnyitásakor: %v", err))
+		return err
+	}
+	defer port.Close()
+
+	_, err = port.Write([]byte(jel + "\n"))
+	if err != nil {
+		addLog(fmt.Sprintf("Hiba jel küldésekor: %v", err))
+		return err
+	}
+	addLog(fmt.Sprintf("Jel elküldve: %s", jel))
+
+	time.Sleep(100 * time.Millisecond)
+
+	buf := make([]byte, 100)
+	n, err := port.Read(buf)
+	if err != nil {
+		addLog(fmt.Sprintf("Hiba a válasz olvasásakor: %v", err))
+		return err
+	}
+
+	valasz := strings.TrimSpace(string(buf[:n]))
+	addLog(fmt.Sprintf("Pico válasza: %s", valasz))
+
+	return nil
+}
+
+func main() {
+	portValaszt()
 	loadTimesFromFile(currentTimeFile)
 
-	// --- NTP idő lekérése ---
 	ntpTime, err := ntp.Time("pool.ntp.org")
 	if err != nil {
 		fmt.Println("NTP lekérés sikertelen, gépi időt használok")
@@ -198,7 +282,6 @@ func main() {
 	go clockTicker()
 	go scheduler()
 
-	// --- Main menu ---
 	mainMenu := tview.NewList().
 		AddItem("1. Időzítések", "", '1', func() {
 			pages.SwitchToPage("times")
@@ -239,14 +322,12 @@ func main() {
 		AddItem(statusBar, 1, 1, false).
 		AddItem(mainMenu, 0, 1, true)
 
-	// --- Oldal hozzáadása ---
 	pages.AddPage("main", layout, true, true)
 	pages.AddPage("times", timesMenu(), true, false)
 	pages.AddPage("dev", devConsole(), true, false)
 	pages.AddPage("settime", setTimeMenu(), true, false)
 	pages.AddPage("filemenu", fileSelectionMenu(), true, false)
 
-	// Status bar frissítés
 	go func() {
 		for {
 			timeMutex.Lock()
@@ -272,7 +353,6 @@ func main() {
 	}
 }
 
-// ---- CLOCK ----
 func clockTicker() {
 	for {
 		time.Sleep(time.Second)
@@ -287,7 +367,6 @@ func timesMenu() tview.Primitive {
 	input := tview.NewInputField().SetLabel("Idő HH:MM:SS): ")
 	timesInfo := tview.NewTextView().SetDynamicColors(true)
 
-	// A globális updateTimesMenu változóhoz rendeljük a frissítő függvényt
 	updateTimesMenu = func() {
 		if len(weekdayTimes) == 0 {
 			timesInfo.SetText("Nincsenek időzítések")
@@ -296,33 +375,30 @@ func timesMenu() tview.Primitive {
 		}
 	}
 
-	updateTimesMenu() // azonnali frissítés
+	updateTimesMenu()
 
-	// Új idő hozzáadása
 	input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			txt := input.GetText()
-			_, err := time.Parse("15:04:05", txt) // csak ellenőrzés, t nem kell
+			_, err := time.Parse("15:04:05", txt)
 			if err != nil {
 				addLog("Hibás időformátum: " + txt)
 				return
 			}
-			// Idő hozzáadása
+
 			weekdayTimes = append(weekdayTimes, txt)
 			addLog("Idő hozzáadva: " + txt)
-			saveTimesToFile() // mentés fájlba
-			updateTimesMenu() // frissítés az UI-ban
-			input.SetText("") // mező ürítése
+			saveTimesToFile()
+			updateTimesMenu()
+			input.SetText("")
 		}
 	})
 
-	// Vissza gomb
 	back := tview.NewButton("Vissza/ESC").SetSelectedFunc(func() {
 		pages.SwitchToPage("main")
 		app.SetFocus(pages)
 	})
 
-	// ESC gomb kezelése
 	input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc {
 			pages.SwitchToPage("main")
@@ -339,7 +415,6 @@ func timesMenu() tview.Primitive {
 		AddItem(back, 1, 1, false)
 }
 
-// ---- DEV CONSOLE ----
 func devConsole() tview.Primitive {
 	console := tview.NewTextView().SetDynamicColors(true)
 
@@ -379,7 +454,6 @@ func devConsole() tview.Primitive {
 	return flex
 }
 
-// ---- SET TIME MENU ----
 func setTimeMenu() tview.Primitive {
 	form := tview.NewForm().
 		AddInputField("Idő (HH:MM:SS)", "", 8, nil, nil).
@@ -428,7 +502,6 @@ func setTimeMenu() tview.Primitive {
 	return form
 }
 
-// ---- PULSE ----
 func startPulse() {
 	if pulseRunning {
 		return
@@ -451,15 +524,13 @@ func startPulse() {
 }
 
 func triggerPulseOnce() {
-	// biztosítjuk, hogy mindig LOW-ról induljon
-	SetLow()
-	time.Sleep(500 * time.Millisecond) // rövid delay a biztonságos váltáshoz
 
-	// 1 másodperces HIGH
+	SetLow()
+	time.Sleep(500 * time.Millisecond)
+
 	SetHigh()
 	sleepWithDraw(3 * time.Second)
 
-	// vissza LOW-ra
 	SetLow()
 
 }
@@ -478,7 +549,6 @@ func sleepWithDraw(d time.Duration) {
 	}
 }
 
-// ---- SCHEDULER ----
 func scheduler() {
 	for {
 		if !enabled {
@@ -493,7 +563,7 @@ func scheduler() {
 		for _, t := range weekdayTimes {
 			if t == now {
 				addLog("IDŐZÍTÉS AKTIVÁLVA: " + t)
-				go triggerPulseOnce() // egyszeri HIGH/LOW a triggerhez
+				go triggerPulseOnce()
 			}
 		}
 
@@ -501,7 +571,6 @@ func scheduler() {
 	}
 }
 
-// ---- FILE LOAD/SAVE ----
 func loadTimesFromFile(filename string) {
 	weekdayTimes = nil
 
@@ -533,7 +602,7 @@ func loadTimesFromFile(filename string) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(strings.ReplaceAll(scanner.Text(), "\r", ""))
-		line = strings.TrimPrefix(line, "\ufeff") // BOM eltávolítása
+		line = strings.TrimPrefix(line, "\ufeff")
 		if line != "" {
 			weekdayTimes = append(weekdayTimes, line)
 		}
@@ -569,7 +638,6 @@ func saveTimesToFile() {
 	addLog("Időzítések mentve a " + currentTimeFile + " fájlba")
 }
 
-// ---- FILE SELECTION MENU ----
 func fileSelectionMenu() tview.Primitive {
 	list := tview.NewList()
 
@@ -643,7 +711,7 @@ func showNewFilePrompt(updateList func()) {
 	app.SetRoot(form, true)
 }
 
-func canRunNow(enableWeekend bool) bool {
+func canRunNow() bool {
 	timeMutex.Lock()
 	ct := currentTime
 	timeMutex.Unlock()
