@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Kérjük be a felhasználótól a port nevét
+
 	fmt.Print("Add meg a soros portot (pl. COM8 vagy /dev/ttyUSB0): ")
 	inputReader := bufio.NewReader(os.Stdin)
 	port, _ := inputReader.ReadString('\n')
@@ -23,7 +23,7 @@ func main() {
 	config := &serial.Config{
 		Name:        port,
 		Baud:        baud,
-		ReadTimeout: time.Millisecond * 50, // nem blokkoló olvasás
+		ReadTimeout: time.Millisecond * 50,
 	}
 
 	s, err := serial.OpenPort(config)
@@ -37,7 +37,7 @@ func main() {
 	var buffer strings.Builder
 
 	for {
-		// Egy bájt olvasása
+
 		buf := make([]byte, 1)
 		n, err := s.Read(buf)
 		if err != nil || n == 0 {
@@ -57,13 +57,13 @@ func main() {
 				s.Write([]byte("OK LOW\n"))
 				fmt.Println("GPIO1 = ALACSONY")
 			case "":
-				// üres sor figyelmen kívül hagyása
+
 			default:
 				s.Write([]byte("ERR ISMERETLEN\n"))
 				fmt.Println("HIBA ISMERETLEN PARANCS:", parancs)
 			}
 		} else {
-			// karakter hozzáfűzése a bufferhez
+
 			buffer.WriteString(c)
 		}
 	}

@@ -1,26 +1,23 @@
-# Bellringer
-Ez az alkalmazás egy Raspberry Pi Pico által és/vagy mp3 által vezérelt csengő/relé rendszer terminál‑alapú kezelőfelülete.  
-A program időzítéseket kezel, impulzusmódot biztosít, NTP‑időt használ, és soros kapcsolaton keresztül vezérli a Pico GPIO‑ját.
+# Bellringer – Terminál alapú csengővezérlő rendszer
 
-A felület a `tview` könyvtárra épül, és teljes egészében billentyűzetről használható.
-
----
+A Bellringer egy Raspberry Pi Pico-val és/vagy MP3 lejátszással működő csengő vagy relé vezérlőrendszer.  
+A kezelőfelület terminálon fut, a tview könyvtárra épül, és teljes egészében billentyűzetről használható.
 
 ## Fő funkciók
 
 ### Időzítések
-- Időpontok hozzáadása (HH:MM formátum)
-- Időzítések mentése és betöltése `.txt` fájlokból
+- Időpontok hozzáadása (HH:MM:SS)
+- Időzítések mentése és betöltése .txt fájlokból
 - Több időzítésfájl kezelése
 - Új időzítésfájl létrehozása
 
-### GPIO vezérlés
-- HIGH és LOW állapot küldése a Pico felé
-- Automatikus USB‑port felismerés
-- Visszajelzés a Pico válasza alapján
+### GPIO vezérlés (Raspberry Pi Pico)
+- HIGH és LOW jel küldése
+- Automatikus USB port felismerés
+- Pico válaszainak naplózása
 
 ### Impulzus mód
-- Folyamatos váltakozó HIGH/LOW jelzés
+- Folyamatos váltakozó HIGH és LOW jelzés
 - Manuális egyszeri impulzus (trigger)
 
 ### Időkezelés
@@ -33,27 +30,22 @@ A felület a `tview` könyvtárra épül, és teljes egészében billentyűzetr�
 - Scheduler csak engedélyezett napokon fut
 
 ### Fejlesztői konzol
-- Kézi HIGH/LOW/TIGGER parancsok
-- Log megtekintése
-- Log törlése
-
----
+- Kézi HIGH, LOW és TRIGGER parancsok
+- Log megtekintése és törlése
 
 ## Fő menüpontok
 
 1. Időzítések kezelése  
-2. Be/Ki kapcsolás  
-3. Impulzus/Tűzjelző mód  
+2. Be vagy Ki kapcsolás  
+3. Impulzus mód  
 4. Fejlesztői konzol  
 5. Idő beállítása  
 6. Időzítésfájl kiválasztása  
 7. Hétvégi működés engedélyezése  
 
----
-
 ## Fájlkezelés
 
-A program minden időzítést egyszerű szövegfájlokban tárol.  
+Az időzítések egyszerű szövegfájlokban tárolódnak.  
 Egy fájl egy időzítéslistát tartalmaz, soronként egy időponttal.
 
 Példa:
@@ -65,39 +57,30 @@ Példa:
 13:15:00
 ```
 
-A fájlok automatikusan megjelennek a menüben, és kiválaszthatók vagy szerkeszthetők.
-
----
+A fájlok automatikusan megjelennek a menüben és kiválaszthatók.
 
 ## Kommunikáció a Pico-val
 
-A program automatikusan megkeresi a Pico USB‑s soros portját.  
+A program automatikusan megkeresi a Pico USB-s soros portját.  
 A kommunikáció egyszerű szöveges parancsokkal történik:
 
-- `HIGH`
-- `LOW`
+- HIGH  
+- LOW  
 
-A Pico válasza: `OK...`
-
-Ha a válasz nem OK, a program hibát jelez.
-
----
+A Pico válasza naplózásra kerül.
 
 ## Scheduler működése
 
 A háttérben futó ütemező másodpercenként ellenőrzi:
-
-- engedélyezve van‑e a rendszer  
-- aktuális idő megegyezik‑e egy időzítéssel  
-- hétvégi működés engedélyezett‑e  
+- engedélyezve van-e a rendszer  
+- az aktuális idő megegyezik-e egy időzítéssel  
+- hétvégi működés engedélyezett-e  
 
 Ha igen, lefut egy egyszeri impulzus.
 
----
-
 ## Fordítás és futtatás
 
-A program Go nyelven készült.
+A program Go nyelven készült. Windows és linux is támogatott
 
 Fordítás:
 
@@ -112,10 +95,24 @@ Futtatás:
 ```
 
 A futtatáshoz szükséges könyvtárak:
+- github.com/beevik/ntp
+- github.com/gdamore/tcell/v2
+- github.com/rivo/tview
+- go.bug.st/serial
 
-- `github.com/beevik/ntp`
-- `github.com/gdamore/tcell/v2`
-- `github.com/rivo/tview`
-- `go.bug.st/serial`
+## Execution Flow
 
----
+1. A program induláskor megpróbálja betölteni a soros portot a serial.txt fájlból.  
+2. Ha nincs beállítva, felsorolja az elérhető portokat és választást kér.  
+3. Betölti az időzítéseket a kijelölt .txt fájlból.  
+4. Megpróbál NTP időt lekérni, ha nem sikerül, a rendszeridőt használja.  
+5. Elindul a clockTicker, amely másodpercenként frissíti a belső időt.  
+6. Elindul a scheduler, amely másodpercenként ellenőrzi az időzítéseket.  
+7. A felhasználó a menüből vezérelheti a működést:  
+   - időzítések hozzáadása  
+   - impulzus mód bekapcsolása  
+   - kézi HIGH vagy LOW jel küldése  
+   - idő beállítása  
+   - időzítésfájl kiválasztása  
+8. Ha egy időzítés elérkezik, a program lefuttat egy impulzust (HIGH, majd késleltetés, majd LOW).  
+9. A log folyamatosan frissül és megtekinthető a fejlesztői konzolban.
