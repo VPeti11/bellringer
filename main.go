@@ -554,6 +554,10 @@ func dateOverrideMenu() tview.Primitive {
 		}
 	}
 
+	refreshBtn := tview.NewButton("[U] Frissítés").SetSelectedFunc(func() {
+		refresh()
+	})
+
 	add := func(date string, times []string) {
 		dateOverridesMu.Lock()
 		dateOverrides[date] = append(dateOverrides[date], times...)
@@ -623,6 +627,7 @@ func dateOverrideMenu() tview.Primitive {
 
 	layout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
+		AddItem(refreshBtn, 1, 0, false).
 		AddItem(list, 0, 2, false).
 		AddItem(inputDate, 1, 1, true).
 		AddItem(inputTimes, 1, 1, false)
