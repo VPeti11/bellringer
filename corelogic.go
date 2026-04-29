@@ -118,11 +118,15 @@ func scheduler() {
 				shortTimesMu.RLock()
 				short := shortTimes[t]
 				shortTimesMu.RUnlock()
-
 				if short {
-					go triggerPulseOnceal()
+					if enabled && !eStop {
+						go triggerPulseOnceal()
+					}
+
 				} else {
-					go triggerPulseOnce()
+					if enabled && !eStop {
+						go triggerPulseOnce()
+					}
 				}
 			}
 		}
@@ -130,25 +134,36 @@ func scheduler() {
 }
 
 func emergencyStop() {
-	addLog("VÉSZLEÁLLÍTÁS AKTIVÁLVA")
-	pulseMode = false
-	pulseRunning = false
-	bellRinging = false
-	go SetLow()
+	if !eStop {
+		addLog("VÉSZLEÁLLÍTÁS AKTIVÁLVA")
+		pulseMode = false
+		pulseRunning = false
+		bellRinging = false
 
-	if webOn {
-		stopWebServer()
+		go SetLow()
+
+		if webOn {
+			stopWebServer()
+		}
+
+		enabled = false
+		eStop = true
+	} else {
+		addLog("VÉSZLEÁLLÍTÁS FELDOLDVA")
+
+		enabled = true
+
+		if !webOn {
+			startWebServer()
+		}
+		eStop = false
 	}
 
-	enabled = false
 	app.QueueUpdateDraw(func() {})
 }
 
 func SetHigh() {
 	if bellRinging {
-		return
-	}
-	if !enabled {
 		return
 	}
 	if !pulseMode {
