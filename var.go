@@ -66,7 +66,15 @@ var (
 	useEnglish bool
 
 	eStop bool
+
+	toggleQueue []ScheduledToggle
+	toggleMu    sync.Mutex
 )
+
+type ScheduledToggle struct {
+	Time  time.Time
+	State bool
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {

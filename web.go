@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,57 @@ const htmlPage = `
     .active-day { background: #7c3aed; color: white; }
     #status { text-align: left; line-height: 1.6; font-family: monospace; }
     b { color: #fff; }
+    .flex-row {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.flex-row input {
+    flex: 2;
+}
+
+.flex-row select {
+    flex: 1;
+    background: black;
+    color: #bb86fc;
+    border: 1px solid #7c3aed;
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.list-box {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 10px;
+    border-top: 1px solid #333;
+    padding-top: 10px;
+}
+
+.toggle-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #1a1a2e;
+    margin: 5px 0;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.delete-btn {
+    background: #d32f2f;
+    color: white;
+    border: none;
+    padding: 3px 8px;
+    font-size: 0.8em;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.delete-btn:hover {
+    background: #b71c1c;
+}
 </style>
 </head>
 <body>
@@ -75,14 +127,14 @@ const htmlPage = `
             <button class="day-btn" id="btn-Vasárnap" onclick="setDay('Vasárnap')">V</button>
         </div>
         <h4 id="currentDayDisplay">Nap: Hétfő</h4>
-        <input id="timeInput" placeholder="HH:MM:SS">
+        <input id="timeInput" placeholder="ÓÓPPMM">
         <button onclick="addTime()">Hozzáadás</button>
         <div id="timesList" style="max-height: 200px; overflow-y: auto;"></div>
     </div>
 
     <div class="card">
         <h3>Rövid időpontok</h3>
-        <input id="shortInput" placeholder="HH:MM:SS">
+        <input id="shortInput" placeholder="ÓÓPPMM">
         <button onclick="addShort()">Hozzáadás</button>
         <div id="shortTimesList" style="max-height: 150px; overflow-y: auto;"></div>
     </div>
@@ -95,12 +147,28 @@ const htmlPage = `
         <div id="filesList" style="max-height: 150px; overflow-y: auto; margin-top:10px;"></div>
     </div>
     <div class="card">
-    <h3>Felülírások (Override)</h3>
-    <input id="overrideDate" placeholder="YYMMDD">
-    <input id="overrideTimes" placeholder="HH:MM:SS, ...">
+    <h3>Felülírások</h3>
+    <input id="overrideDate" placeholder="ÉÉHHNN">
+    <input id="overrideTimes" placeholder="ÓÓPPMM, ...">
     <button onclick="addOverride()">Hozzáadás</button>
     <div id="overrideList" style="max-height:200px; overflow-y:auto;"></div>
     </div>
+<div class="card">
+    <h3>Időzített kapcsolás</h3>
+
+    <div class="flex-row">
+        <input id="toggleDT" placeholder="ÉÉHHNN ÓÓPPMM">
+        <select id="toggleState">
+            <option value="1">BE</option>
+            <option value="0">KI</option>
+        </select>
+    </div>
+
+    <button onclick="addToggle()">Ütemezés hozzáadása</button>
+
+    <div id="toggleList" class="list-box"></div>
+</div>
+
 </div>
 
 <button class="panic-btn" onclick="send('/api/emergency-stop')">VÉSZ<br>STOP</button>
@@ -271,6 +339,70 @@ async function createFile() {
     loadFiles();
 }
 
+function refreshToggles() {
+    fetch('/api/toggles')
+        .then(response => response.json())
+        .then(data => {
+            const listDiv = document.getElementById('toggleList');
+            listDiv.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                listDiv.innerHTML = '<p style="font-size: 0.8em; color: #888;">Nincs aktív ütemezés.</p>';
+                return;
+            }
+
+            data.forEach((item, index) => {
+                const d = new Date(item.Time);
+                const dateStr = d.toLocaleString('hu-HU');
+                const stateText = item.State ? '<span style="color: #4caf50;">BE</span>' : '<span style="color: #f44336;">KI</span>';
+
+                const div = document.createElement('div');
+                div.className = "toggle-item";
+                
+                div.innerHTML = '<span>' + dateStr + ' ➔ <b>' + stateText + '</b></span>' +
+                                '<button class="delete-btn" onclick="deleteToggle(' + index + ')">Törlés</button>'
+                
+                listDiv.appendChild(div);
+            });
+        });
+}
+
+function addToggle() {
+    const dt = document.getElementById('toggleDT').value.trim();
+    const state = document.getElementById('toggleState').value;
+
+    if (!dt) {
+        alert("Adj meg egy dátumot! (ÉÉHHNN ÓÓPPMM)");
+        return;
+    }
+
+    fetch('/api/add-toggle?dt=' + encodeURIComponent(dt) + '&state=' + state)
+        .then(response => response.text())
+        .then(res => {
+            if (res === "ok") {
+                document.getElementById('toggleDT').value = '';
+                refreshToggles();
+            } else {
+                alert("Hiba: " + res);
+            }
+        });
+}
+
+function deleteToggle(index) {
+    if (!confirm("Biztosan törlöd ezt az ütemezést?")) return;
+
+    fetch('/api/delete-toggle?index=' + index)
+        .then(response => response.text())
+        .then(res => {
+            if (res === "ok") {
+                refreshToggles();
+            } else {
+                alert("Hiba a törlés során: " + res);
+            }
+        });
+}
+
+
     
 function initWS() {
     let protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
@@ -286,6 +418,7 @@ function initWS() {
     loadShortTimes();
     initWS();
     loadOverrides();
+    refreshToggles();
     
 </script>
 </body>
@@ -429,6 +562,58 @@ const htmlPageEng = `
     }
 
     b { color: #fff; }
+
+        .flex-row {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.flex-row input {
+    flex: 2;
+}
+
+.flex-row select {
+    flex: 1;
+    background: black;
+    color: #bb86fc;
+    border: 1px solid #7c3aed;
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.list-box {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 10px;
+    border-top: 1px solid #333;
+    padding-top: 10px;
+}
+
+.toggle-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #1a1a2e;
+    margin: 5px 0;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.delete-btn {
+    background: #d32f2f;
+    color: white;
+    border: none;
+    padding: 3px 8px;
+    font-size: 0.8em;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.delete-btn:hover {
+    background: #b71c1c;
+}
 </style>
 </head>
 
@@ -502,6 +687,22 @@ const htmlPageEng = `
     <button onclick="addOverride()">Add</button>
     <div id="overrideList" style="max-height:200px; overflow-y:auto;"></div>
     </div>
+
+    <div class="card">
+    <h3>Scheduled ON/OFF</h3>
+
+    <div class="flex-row">
+        <input id="toggleDT" placeholder="YYMMDD HHMMSS">
+        <select id="toggleState">
+            <option value="1">ON</option>
+            <option value="0">OFF</option>
+        </select>
+    </div>
+
+    <button onclick="addToggle()">Add schedule</button>
+
+    <div id="toggleList" class="list-box"></div>
+</div>
 
 </div>
 
@@ -671,6 +872,69 @@ async function createFile() {
     loadFiles();
 }
 
+function refreshToggles() {
+    fetch('/api/toggles')
+        .then(response => response.json())
+        .then(data => {
+            const listDiv = document.getElementById('toggleList');
+            listDiv.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                listDiv.innerHTML = '<p style="font-size: 0.8em; color: #888;">No active schedules</p>';
+                return;
+            }
+
+            data.forEach((item, index) => {
+                const d = new Date(item.Time);
+                const dateStr = d.toLocaleString('hu-HU');
+                const stateText = item.State ? '<span style="color: #4caf50;">BE</span>' : '<span style="color: #f44336;">KI</span>';
+
+                const div = document.createElement('div');
+                div.className = "toggle-item";
+                
+                div.innerHTML = '<span>' + dateStr + ' ➔ <b>' + stateText + '</b></span>' +
+                                '<button class="delete-btn" onclick="deleteToggle(' + index + ')">Törlés</button>'
+                
+                listDiv.appendChild(div);
+            });
+        });
+}
+
+function addToggle() {
+    const dt = document.getElementById('toggleDT').value.trim();
+    const state = document.getElementById('toggleState').value;
+
+    if (!dt) {
+        alert("Specify a date!");
+        return;
+    }
+
+    fetch('/api/add-toggle?dt=' + encodeURIComponent(dt) + '&state=' + state)
+        .then(response => response.text())
+        .then(res => {
+            if (res === "ok") {
+                document.getElementById('toggleDT').value = '';
+                refreshToggles();
+            } else {
+                alert("Hiba: " + res);
+            }
+        });
+}
+
+function deleteToggle(index) {
+    if (!confirm("Are you sure you want to delete is schedule?")) return;
+
+    fetch('/api/delete-toggle?index=' + index)
+        .then(response => response.text())
+        .then(res => {
+            if (res === "ok") {
+                refreshToggles();
+            } else {
+                alert("Hiba a törlés során: " + res);
+            }
+        });
+}
+
 function initWS() {
     let protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
     let ws = new WebSocket(protocol + window.location.host + "/ws");
@@ -683,6 +947,7 @@ setDay('Monday');
 loadFiles();
 loadShortTimes();
 initWS();
+refreshToggles()
 
 
 </script>
@@ -1232,6 +1497,65 @@ func startWebServer() {
 
 		json.NewEncoder(w).Encode(dateOverrides)
 	}))
+	mux.HandleFunc("/api/add-toggle", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		dtStr := strings.TrimSpace(r.URL.Query().Get("dt"))       // Formátum: 060102 150405
+		stateStr := strings.TrimSpace(r.URL.Query().Get("state")) // 1 vagy 0
+
+		t, err := time.ParseInLocation("060102 150405", dtStr, time.Local)
+		if err != nil {
+			http.Error(w, "invalid datetime format (YYMMDD HHMMSS)", 400)
+			return
+		}
+
+		if t.Before(time.Now()) {
+			http.Error(w, "past time not allowed", 400)
+			return
+		}
+
+		state := stateStr == "1"
+
+		toggleMu.Lock()
+		toggleQueue = append(toggleQueue, ScheduledToggle{
+			Time:  t,
+			State: state,
+		})
+		toggleMu.Unlock()
+
+		addLog(fmt.Sprintf("WEB: Ütemezés hozzáadva: %s -> %v", dtStr, state))
+		w.Write([]byte("ok"))
+	}))
+
+	mux.HandleFunc("/api/delete-toggle", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		idxStr := r.URL.Query().Get("index")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			http.Error(w, "invalid index", 400)
+			return
+		}
+
+		toggleMu.Lock()
+		if idx < 0 || idx >= len(toggleQueue) {
+			toggleMu.Unlock()
+			http.Error(w, "index out of range", 400)
+			return
+		}
+
+		removed := toggleQueue[idx]
+		toggleQueue = append(toggleQueue[:idx], toggleQueue[idx+1:]...)
+		toggleMu.Unlock()
+
+		addLog("WEB: Ütemezés törölve " + removed.Time.Format("06-01-02 15:04:05"))
+		w.Write([]byte("ok"))
+	}))
+
+	mux.HandleFunc("/api/toggles", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		toggleMu.Lock()
+		defer toggleMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toggleQueue)
+	}))
+
 	mux.HandleFunc("/nextring-ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {

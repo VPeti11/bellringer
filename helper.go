@@ -378,3 +378,24 @@ func centerText(text string, width int) string {
 	padding := (width - len(text)) / 2
 	return strings.Repeat(" ", padding) + text
 }
+
+func addScheduledToggle(dt string, state bool) error {
+	t, err := time.Parse("060102 150405", dt)
+	if err != nil {
+		return err
+	}
+
+	if t.Before(time.Now()) {
+		return fmt.Errorf("past time not allowed")
+	}
+
+	toggleMu.Lock()
+	toggleQueue = append(toggleQueue, ScheduledToggle{
+		Time:  t,
+		State: state,
+	})
+	toggleMu.Unlock()
+
+	addLog("Scheduled toggle added: " + dt)
+	return nil
+}
