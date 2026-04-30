@@ -94,6 +94,13 @@ const htmlPage = `
         <button onclick="createFile()">Új fájl létrehozása</button>
         <div id="filesList" style="max-height: 150px; overflow-y: auto; margin-top:10px;"></div>
     </div>
+    <div class="card">
+    <h3>Felülírások (Override)</h3>
+    <input id="overrideDate" placeholder="YYMMDD">
+    <input id="overrideTimes" placeholder="HH:MM:SS, ...">
+    <button onclick="addOverride()">Hozzáadás</button>
+    <div id="overrideList" style="max-height:200px; overflow-y:auto;"></div>
+    </div>
 </div>
 
 <button class="panic-btn" onclick="send('/api/emergency-stop')">VÉSZ<br>STOP</button>
@@ -131,6 +138,48 @@ const htmlPage = `
             let data = await res.json();
             renderStatus(data);
         } catch (e) { console.error("Status update error", e); }
+    }
+
+async function loadOverrides() {
+    let res = await fetch('/api/overrides');
+    let data = await res.json();
+
+    let html = "";
+    Object.keys(data).forEach(d => {
+        let times = data[d];
+
+        let t = (times.length === 0)
+            ? "NONE (tiltva)"
+            : times.join(", ");
+
+        html += '<div class="time-item">' +
+            '<span>' + d + ' → ' + t + '</span>' +
+            '<button class="small-btn" onclick="deleteOverride(\'' + d + '\')">Törlés</button>' +
+            '</div>';
+    });
+
+    document.getElementById('overrideList').innerHTML = html;
+}
+
+async function addOverride() {
+    let date = document.getElementById('overrideDate').value;
+    let times = document.getElementById('overrideTimes').value;
+
+    if (!date) return;
+
+    await fetch('/api/add-override?date=' + date + '&times=' + encodeURIComponent(times));
+
+    document.getElementById('overrideDate').value = "";
+    document.getElementById('overrideTimes').value = "";
+
+    loadOverrides();
+}
+
+    async function deleteOverride(date) {
+    if (!confirm("Törlöd ezt a felülírást: " + date + "?")) return;
+
+    await fetch('/api/delete-override?date=' + date);
+    loadOverrides();
     }
 
     async function loadTimes() {
@@ -236,6 +285,7 @@ function initWS() {
     loadFiles();
     loadShortTimes();
     initWS();
+    loadOverrides();
     
 </script>
 </body>
@@ -445,6 +495,13 @@ const htmlPageEng = `
 
         <div id="filesList" style="margin-top:10px;"></div>
     </div>
+        <div class="card">
+    <h3>Overrides</h3>
+    <input id="overrideDate" placeholder="YYMMDD">
+    <input id="overrideTimes" placeholder="HH:MM:SS, ...">
+    <button onclick="addOverride()">Add</button>
+    <div id="overrideList" style="max-height:200px; overflow-y:auto;"></div>
+    </div>
 
 </div>
 
@@ -486,6 +543,41 @@ async function update() {
     let data = await res.json();
     renderStatus(data);
 }
+async function addOverride() {
+    let date = document.getElementById('overrideDate').value;
+    let times = document.getElementById('overrideTimes').value;
+
+    if (!date) return;
+
+    await fetch('/api/add-override?date=' + date + '&times=' + encodeURIComponent(times));
+
+    document.getElementById('overrideDate').value = "";
+    document.getElementById('overrideTimes').value = "";
+
+    loadOverrides();
+}
+
+async function addOverride() {
+    let date = document.getElementById('overrideDate').value;
+    let times = document.getElementById('overrideTimes').value;
+
+    if (!date) return;
+
+    await fetch('/api/add-override?date=' + date + '&times=' + encodeURIComponent(times));
+
+    document.getElementById('overrideDate').value = "";
+    document.getElementById('overrideTimes').value = "";
+
+    loadOverrides();
+}
+
+    async function deleteOverride(date) {
+    if (!confirm("Will you delete the overwrite?: " + date + "?")) return;
+
+    await fetch('/api/delete-override?date=' + date);
+    loadOverrides();
+    }
+
 
 async function loadTimes() {
     let res = await fetch('/api/times');
@@ -1086,6 +1178,59 @@ func startWebServer() {
 		})
 
 		w.Write([]byte("ok"))
+	}))
+	mux.HandleFunc("/api/add-override", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		dateStr := strings.TrimSpace(r.URL.Query().Get("date"))
+		rawTimes := strings.TrimSpace(r.URL.Query().Get("times"))
+
+		parsedDate, err := time.Parse("060102", dateStr)
+		if err != nil {
+			http.Error(w, "invalid date format", 400)
+			return
+		}
+
+		now := time.Now()
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		if parsedDate.Before(today) {
+			http.Error(w, "past date not allowed", 400)
+			return
+		}
+
+		var times []string
+		if rawTimes != "" {
+			parts := strings.Split(rawTimes, ",")
+			for _, t := range parts {
+				t = strings.TrimSpace(t)
+				if _, err := time.Parse("15:04:05", t); err != nil {
+					http.Error(w, "invalid time: "+t, 400)
+					return
+				}
+				times = append(times, t)
+			}
+		}
+
+		dateOverridesMu.Lock()
+		dateOverrides[dateStr] = append(dateOverrides[dateStr], times...)
+		dateOverridesMu.Unlock()
+		saveTimesToFile()
+		addLog("WEB: override hozzáadva " + dateStr)
+		w.Write([]byte("ok"))
+	}))
+	mux.HandleFunc("/api/delete-override", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		dateStr := r.URL.Query().Get("date")
+
+		dateOverridesMu.Lock()
+		delete(dateOverrides, dateStr)
+		dateOverridesMu.Unlock()
+		saveTimesToFile()
+		addLog("WEB: override törölve " + dateStr)
+		w.Write([]byte("ok"))
+	}))
+	mux.HandleFunc("/api/overrides", authHandler(func(w http.ResponseWriter, r *http.Request) {
+		dateOverridesMu.RLock()
+		defer dateOverridesMu.RUnlock()
+
+		json.NewEncoder(w).Encode(dateOverrides)
 	}))
 	mux.HandleFunc("/nextring-ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

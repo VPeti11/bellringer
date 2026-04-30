@@ -64,6 +64,8 @@ var (
 	dateOverrides   = map[string][]string{}
 
 	useEnglish bool
+
+	eStop bool
 )
 
 var upgrader = websocket.Upgrader{
