@@ -133,6 +133,50 @@ func scheduler() {
 	}
 }
 
+func toggleScheduler() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		nowTime := time.Now()
+		nowStr := nowTime.Format("060102 150405")
+
+		toggleMu.Lock()
+
+		for i := len(toggleQueue) - 1; i >= 0; i-- {
+
+			if toggleQueue[i].Time.Before(nowTime) && toggleQueue[i].Time.Format("060102 150405") != nowStr {
+				addLog("Expired task removed: " + toggleQueue[i].Time.Format("06-01-02 15:04:05"))
+				toggleQueue = append(toggleQueue[:i], toggleQueue[i+1:]...)
+			}
+		}
+
+		var executedIndex = -1
+		var taskToExecute *ScheduledToggle
+
+		for i, t := range toggleQueue {
+			if t.Time.Format("060102 150405") == nowStr {
+				taskToExecute = &t
+				executedIndex = i
+				break
+			}
+		}
+
+		if taskToExecute != nil {
+			enabled = taskToExecute.State
+
+			addLog(fmt.Sprintf("Scheduled toggle executed -> %v (%s)",
+				taskToExecute.State,
+				taskToExecute.Time.Format("06-01-02 15:04:05"),
+			))
+
+			toggleQueue = append(toggleQueue[:executedIndex], toggleQueue[executedIndex+1:]...)
+		}
+
+		toggleMu.Unlock()
+	}
+}
+
 func emergencyStop() {
 	if !eStop {
 		addLog("VÉSZLEÁLLÍTÁS AKTIVÁLVA")

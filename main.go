@@ -24,6 +24,7 @@ func main() {
 	}
 
 	go scheduler()
+	go toggleScheduler()
 
 	mainMenu := tview.NewList().
 		AddItem("1. "+tr("Schedules", "Időzítések"), "", '1', func() { pages.SwitchToPage("times"); app.SetFocus(pages) }).
@@ -52,9 +53,21 @@ func main() {
 				stopWebServer()
 			}
 		}).
-		AddItem("11. "+tr("Short ring times", "Rövid csengés időpontok"), "", 'r', func() { pages.SwitchToPage("shorttimes"); app.SetFocus(pages) }).
-		AddItem("12. "+tr("Date overrides", "Dátum felülírások-ok"), "", 'o', func() { pages.SwitchToPage("overrides"); app.SetFocus(pages) }).
-		AddItem(tr("EMERGENCY STOP", "VÉSZLEÁLLÍTÁS"), "", 'x', func() { go emergencyStop() })
+		AddItem("11. "+tr("Short ring times", "Rövid csengés időpontok"), "", 'r', func() {
+			pages.SwitchToPage("shorttimes")
+			app.SetFocus(pages)
+		}).
+		AddItem("12. "+tr("Date overrides", "Dátum felülírások-ok"), "", 'o', func() {
+			pages.SwitchToPage("overrides")
+			app.SetFocus(pages)
+		}).
+		AddItem("13. "+tr("Scheduled ON/OFF times", "Időzített BE/KI kapcsolások"), "", 's', func() {
+			pages.SwitchToPage("scheduled")
+			app.SetFocus(pages)
+		}).
+		AddItem(tr("EMERGENCY STOP", "VÉSZLEÁLLÍTÁS"), "", 'x', func() {
+			go emergencyStop()
+		})
 
 	statusBar := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetWordWrap(true)
 	nextEventWidget := tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignRight)
@@ -92,6 +105,7 @@ func main() {
 	pages.AddPage("shorttimes", shortTimesMenu(), true, false)
 	pages.AddPage("overrides", dateOverrideMenu(), true, false)
 	pages.AddPage("splash", splashLayout, true, true)
+	pages.AddPage("scheduled", scheduledMenu(), true, false)
 
 	startTime := time.Now()
 	stopTime := startTime.Add(2 * time.Second)
@@ -672,6 +686,170 @@ func dateOverrideMenu() tview.Primitive {
 
 	refresh()
 	app.SetFocus(inputDate)
+
+	return layout
+}
+
+func scheduledMenu() tview.Primitive {
+	inputDateTime := tview.NewInputField().
+		SetLabel(tr("DateTime (YYMMDD HHMMSS): ", "Dátum/idő (ÉÉHHNN ÓÓPPMM): "))
+
+	inputState := tview.NewInputField().
+		SetLabel(tr("State (1=ON, 0=OFF): ", "Állapot (1=BE, 0=KI): "))
+
+	list := tview.NewList().SetSelectedFocusOnly(true)
+
+	help := tview.NewTextView().
+		SetTextColor(tcell.ColorYellow).
+		SetText(tr(
+			" [ENTER] add | [d] delete | [u] refresh | [TAB] switch | [ESC] back",
+			" [ENTER] hozzáadás | [d] törlés | [u] frissítés | [TAB] váltás | [ESC] vissza",
+		))
+
+	refresh := func() {
+		list.Clear()
+
+		toggleMu.Lock()
+		defer toggleMu.Unlock()
+
+		for _, item := range toggleQueue {
+			state := tr("OFF", "KI")
+			if item.State {
+				state = tr("ON", "BE")
+			}
+
+			display := fmt.Sprintf(" %s -> %s",
+				item.Time.Format("06-01-02 15:04:05"),
+				state,
+			)
+
+			list.AddItem(display,
+				tr("delete (Enter / d)", "törlés (Enter / d)"),
+				0,
+				nil,
+			)
+		}
+	}
+
+	add := func(dt string, state bool) {
+		err := addScheduledToggle(dt, state)
+		if err != nil {
+			addLog(tr("Error: ", "Hiba: ") + err.Error())
+			return
+		}
+		refresh()
+	}
+
+	del := func(index int) {
+		toggleMu.Lock()
+
+		if index < 0 || len(toggleQueue) == 0 || index >= len(toggleQueue) {
+			toggleMu.Unlock()
+			return
+		}
+
+		removed := toggleQueue[index]
+
+		toggleQueue = append(toggleQueue[:index], toggleQueue[index+1:]...)
+		toggleMu.Unlock()
+
+		addLog(tr("Deleted: ", "Törölve: ") + removed.Time.Format("06-01-02 15:04:05"))
+
+		refresh()
+		if index > 0 {
+			list.SetCurrentItem(index - 1)
+		}
+	}
+
+	inputState.SetDoneFunc(func(key tcell.Key) {
+		if key != tcell.KeyEnter {
+			return
+		}
+
+		dt := strings.TrimSpace(inputDateTime.GetText())
+		st := strings.TrimSpace(inputState.GetText())
+
+		parsedTime, err := time.ParseInLocation("060102 150405", dt, time.Local)
+		if err != nil {
+			addLog(tr("Invalid datetime format!", "Hibás dátum/idő formátum!"))
+			return
+		}
+
+		if parsedTime.Before(time.Now()) {
+			addLog(tr("Cannot add past time!", "Múltbeli idő nem adható hozzá!"))
+			return
+		}
+
+		if st != "1" && st != "0" {
+			addLog(tr("State must be 1 or 0", "Az állapot csak 1 vagy 0 lehet"))
+			return
+		}
+
+		state := st == "1"
+
+		add(dt, state)
+
+		inputDateTime.SetText("")
+		inputState.SetText("")
+		app.SetFocus(inputDateTime)
+	})
+
+	list.SetSelectedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		del(index)
+	})
+
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(list, 0, 1, true).
+		AddItem(inputDateTime, 1, 1, false).
+		AddItem(inputState, 1, 1, false).
+		AddItem(help, 1, 1, false)
+
+	layout.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+
+		switch ev.Key() {
+
+		case tcell.KeyTab:
+			f := app.GetFocus()
+
+			switch f {
+			case inputDateTime:
+				app.SetFocus(inputState)
+			case inputState:
+				app.SetFocus(list)
+			default:
+				app.SetFocus(inputDateTime)
+			}
+			return nil
+
+		case tcell.KeyEsc:
+			pages.SwitchToPage("main")
+			return nil
+		}
+
+		if app.GetFocus() == list {
+			switch ev.Rune() {
+
+			case 'd':
+				index := list.GetCurrentItem()
+				del(index)
+				return nil
+
+			case 'u':
+				refresh()
+				return nil
+
+			case 'a':
+				app.SetFocus(inputDateTime)
+				return nil
+			}
+		}
+
+		return ev
+	})
+
+	refresh()
+	app.SetFocus(inputDateTime)
 
 	return layout
 }
